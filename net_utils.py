@@ -22,7 +22,7 @@ class PartialClassesClassifier(nn.Module):
         new_x = new_x * (-float("inf"))
         new_x[:, self.used_indices] = x[:, self.used_indices]
         max_indices = list(torch.argmax(new_x, -1).cpu().numpy())
-        return [self.index_to_class[max_index] for max_index in max_indices]
+        return torch.LongTensor([self.index_to_class[max_index] for max_index in max_indices])
 
 
 def get_partial_classifier(model_name):
@@ -55,3 +55,13 @@ def create_partially_trainable_net(net, num_classes, layers_to_enable=0):
     #     fc.requires_grad=True
     #     net = torch.nn.Sequential([net, fc])
     return net
+
+
+class NetWithResult(nn.Module):
+    def __init__(self, net):
+        super(NetWithResult, self).__init__()
+        self.net = net
+
+    def forward(self, x):
+        x= self.net(x)
+        return torch.argmax(x,-1)

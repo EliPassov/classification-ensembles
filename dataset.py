@@ -5,10 +5,14 @@ from torch import nn
 from torch.utils.data import Dataset
 
 
+def create_paths_from_folder(folder):
+    return [os.path.join(folder, file_name) for file_name in os.listdir(folder)]
+
+
 class FolderDataset(Dataset):
     def __init__(self, folder, transform):
         self.folder = folder
-        self.images_path = [os.path.join(folder, file_name) for file_name in os.listdir(folder)]
+        self.images_path = create_paths_from_folder(folder)
         # self.images_path = self.images_path[:500] + self.images_path[-500:]
         self.transform = transform
 
@@ -48,6 +52,7 @@ class FolderAugmentedTenCropDataset(FolderDataset):
         img = Image.open(image_path)
         result_images=self.transforms_and_augmentations(img)
         return image_path, result_images
+
 
 class CatsAndDogsDataSet(FolderDataset):
     def __getitem__(self, item):

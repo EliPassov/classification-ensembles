@@ -8,12 +8,14 @@ import torch.optim as optim
 from tensorboardX import SummaryWriter
 import tqdm
 from torch.autograd import Variable
+from pytorch_classifier.net_utils import NetWithResult
 
 
 from pytorch_classifier.dataset import FolderDataset, CatsAndDogsDataSet, CATS_AND_DOGS_CLASSES
 from pytorch_classifier.image import normalize, Rescale
 from pytorch_classifier.net_utils import get_partial_classifier, create_partially_trainable_net, PartialClassesClassifier
-from pytorch_classifier.eval import SimpleEvaluator, check_predictions_cats_and_dogs
+from pytorch_classifier.eval import Evaluator, check_predictions_cats_and_dogs, get_ten_crop_dataloader
+from pytorch_classifier.ensemble_net import MajorityEnsembleModule
 
 
 base_data_transform = transforms.Compose([
@@ -23,16 +25,19 @@ base_data_transform = transforms.Compose([
 ])
 
 
-def train(net, backup_folder, train_path, epochs_to_run, evaluator, loss_func, learning_rate, batch_size, momentum, decay):
+def train(net, backup_folder, train_loader, epochs_to_run, evaluator, loss_func, learning_rate, batch_size, momentum,
+          decay, auxilary_net=None, auxiliary_loader=None):
     net = net.cuda()
     optimizer_parameters = filter(lambda p: p.requires_grad, net.parameters())
     optimizer = optim.SGD(optimizer_parameters, lr=learning_rate / batch_size, momentum=momentum, dampening=0,
                           weight_decay=decay * batch_size)
 
     writer = SummaryWriter(os.path.join(backup_folder, 'log'))
-    train_loader = DataLoader(CatsAndDogsDataSet(train_path, base_data_transform), shuffle=True, batch_size=16, num_workers=16)
 
     avg_loss = None
+
+    if auxilary_net is not None:
+        it = iter(auxiliary_loader)
 
     for epoch in range(epochs_to_run):
         for batch_id, (img_path, data, target) in enumerate(train_loader):
@@ -40,7 +45,21 @@ def train(net, backup_folder, train_path, epochs_to_run, evaluator, loss_func, l
 
             optimizer.zero_grad()
 
+            if auxilary_net is not None:
+                try:
+                    img_path2, data2 = next(it)
+                except StopIteration:
+                    it = iter(auxiliary_loader)
+                    img_path2, data2 = next(it)
+
+                data2 = Variable(data2.cuda())
+                target2 = torch.LongTensor(auxilary_net(data2)).cuda()
+                # assuming the first image in the augmented data loader is a non-augmented image
+                data=torch.cat([data,data2[:, 0, ...]])
+                target=torch.cat([target, target2])
+
             output = net(data)
+
             loss = loss_func(output, target)
 
             if avg_loss is None:
@@ -61,41 +80,45 @@ def train(net, backup_folder, train_path, epochs_to_run, evaluator, loss_func, l
         writer.add_scalar('eval/score', eval_score, epoch)
 
 
-class NetWithResult(nn.Module):
-    def __init__(self, net):
-        super(NetWithResult, self).__init__()
-        self.net = net
-
-    def forward(self, x):
-        x= self.net(x)
-        return torch.argmax(x,-1)
-
 if __name__=='__main__':
-    net = models.squeezenet1_0(pretrained=True)
+    net = create_partially_trainable_net(models.squeezenet1_0(pretrained=True), 2)
+    # net = torch.load('/home/eli/test/cats_vs_dogs/squeezenet_super_mini_train_simple/net_e_199_score_0_9100.pt')
 
-    # net=get_partial_classifier('squeezenet1_0')
-    net = create_partially_trainable_net(net, 2)
-    # net = PartialClassesClassifier(net, CATS_AND_DOGS_CLASSES)
+    train_path = '/home/eli/Data/cats_vs_dogs/super_mini_train1'
+    auxiliary_path = '/home/eli/Data/cats_vs_dogs/super_mini_train2'
+    eval_path = '/home/eli/Data/cats_vs_dogs/super_mini_eval'
 
-    # resnet = models.resnet50(pretrained=True)
-    # net = PartialClassesClassifier(resnet, CATS_AND_DOGS_CLASSES).cuda()
+    backup_folder = '/home/eli/test/cats_vs_dogs/squeezenet_super_mini_train_from_scratch_with_auxilary2'
 
-    train_path = '/home/eli/Data/cats_vs_dogs/mini_train1'
-    eval_path = '/home/eli/Data/cats_vs_dogs/mini_eval'
+    auxilary_net, auxiliary_loader = None, None
+    auxiliary_loader = None
 
-    backup_folder = '/home/eli/test/cats_vs_dogs/squeezenet_mini_train'
-    # train_path = '/home/eli/Data/COCO/coco/images/val2014'
+    # Optional: train with unsupervised data tagging using auxiliary net (same or different) with ensemble inference
 
-    test_loader = DataLoader(FolderDataset(eval_path, base_data_transform), shuffle=False, batch_size=32, num_workers=16)
-    eval_net = NetWithResult(net)
-    evaluator = SimpleEvaluator(eval_net, test_loader)
+    # auxilary_net = net
+    auxilary_net = torch.load('/home/eli/test/cats_vs_dogs/squeezenet_super_mini_train_simple/net_e_199_score_0_9100.pt')
+    auxilary_net = MajorityEnsembleModule(auxilary_net).cuda()
+
     loss_func = nn.CrossEntropyLoss()
     learning_rate = 1e-4
     batch_size = 16
     momentum = 0.95
     decay = 0.0005
-    train(net, backup_folder, train_path, epochs_to_run=50, evaluator=evaluator, loss_func=loss_func, learning_rate=learning_rate,
-          batch_size=batch_size, momentum=momentum, decay=decay)
 
-    # predictions = evaluate_simple(train_path)
+    train_batch_size = batch_size if auxilary_net is None else batch_size // 2
+
+    train_loader = DataLoader(CatsAndDogsDataSet(train_path, base_data_transform), shuffle=True,
+                              batch_size=train_batch_size, num_workers=16)
+    test_loader = DataLoader(FolderDataset(eval_path, base_data_transform), shuffle=False, batch_size=batch_size,
+                             num_workers=16)
+    evaluator = Evaluator(NetWithResult(net), test_loader)
+
+    if auxilary_net is not None:
+        auxiliary_loader = get_ten_crop_dataloader(auxiliary_path, shuffle=True, batch_size=train_batch_size)
+
+
+    train(net, backup_folder, train_loader, epochs_to_run=200, evaluator=evaluator, loss_func=loss_func,
+          learning_rate=learning_rate, batch_size=batch_size, momentum=momentum, decay=decay,
+          auxilary_net = auxilary_net, auxiliary_loader=auxiliary_loader)
+
 
