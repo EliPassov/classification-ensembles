@@ -1,6 +1,8 @@
 # classification-ensembles
-The repository was created to experiment with using image augmentations for creating ensemble classification.
-The ensemble can be used for improving model inference quality and for training using partially unsupervised data as suggested in (for detection and pose estimation) in :
+The repository was created to test the idea of ensembles of image augmentations for improving classification. 
+
+The ensemble can be used for improving model inference quality and for training using partially unsupervised data as suggested (for detection and pose estimation) in the article :
+
 https://arxiv.org/pdf/1712.04440.pdf
 
 #### Experiments:
@@ -39,22 +41,54 @@ The smaller dataset were created as even the smallest classification networks tr
 #### Network: squeezenet1_0
 Again, very light network for lower initial accuracy. 
 
-# Code and how to run
-Currently from scripts, no point converting to args with the current code size.
+# Usage
 
-## eval.py
-Enables running a simple and augmentations ensemble inference.
+## Dependencies
 
-## class_trainer.py
-Enables running simple training for transfer learning and combined training with partial unsupervised data which is tagged using a data augmentation ensemble (with the same or different network)
+* Pytroch 0.4.0
+* TensorboardX
+* tqdm
+* PIL
+* numpy
 
+## Evaluation
+Enables running a simple or augmentations ensemble inference for pretrained and transfer learning trained networks
+
+Run inference for pre-trained squeezent network (with majority ensemble)
+```
+python3 eval.py --pretrained_net squeezenet1_0 --ensemble majority --eval_folder_path <path to images folder>
+```
+
+Run inference for transfer learning trained network(with average ensemble):
+```
+python3 eval.py --trained_net_path <path to Pytorch net file> --ensemble average --eval_folder_path <path to images folder>
+```
+
+## Training
+Enables running simple training for transfer learning and combined training with partial unsupervised data which is tagged using a data augmentation ensemble using an auxiliary net which could be the same or different net.
+
+
+Start training from pre-trained net (without auxiliary net)
+```
+python3 class_trainer.py --backup_folder <backup and tensorboardX path> --batch_size 16 --pretrained_net squeezenet1_0 --num_classes 2 --train_data_path <path to train image folder> --eval_data_path <path to evaluation image folder>
+```
+
+Start training from pre-trained net (with auxiliary net)
+```
+python3 class_trainer.py --backup_folder <backup and tensorboardX path> --batch_size 16 --pretrained_net squeezenet1_0 --num_classes 2 --train_data_path <path to train image folder> --auxiliary_net_path <path to trained net for tagging> --ensemble majority --auxiliary_data_path <path to another train image folder> --eval_data_path <path to evaluation image folder>
+```
+
+Continue training existing net
+```
+python3 class_trainer.py --backup_folder <backup and tensorboardX path> --batch_size 16 --trained_net_path <trained pytorch net path> --train_data_path <path to train image folder> --auxiliary_net_path <path to trained net for tagging> --ensemble majority --auxiliary_data_path <path to another train image folder> --eval_data_path <path to evaluation image folder>
+```
 
 ## Results:
-(2500 images sub set)
+(2500 images evaluation sub set)
 
 * ImageNet inference 84.36%
 * ImageNet inference With TenCrop augmentations (rescale to 240 then ten crop to 224) and majority vote: 84.4%
 * Transfer Learning training on 100 images: 91.04 %
-* Transfer Learning training on 100 images with TneCrop and majority: 91.76% 
+* Transfer Learning training on 100 images inference using TneCrop and majority: 91.76% 
 * Continue training with additional untagged 100 images: 91.88%
 * Train from scrath with additional untagged 100 images: 91.36%

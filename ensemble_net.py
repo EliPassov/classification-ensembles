@@ -55,3 +55,17 @@ class AverageEnsembleModule(EnsembleModule):
         s = predictions.shape
         summed_predictions = predictions.view(s[0], s[1], -1).sum(1).cpu().numpy()
         return [np.argmax(summed_predictions[i]) for i in range(s[0])]
+
+
+def get_ensemble_class(name):
+    ENSEMBLE_INFERENCE_TYPE = {
+        'majority': MajorityEnsembleModule,
+        'average': AverageEnsembleModule
+    }
+    try:
+        result = ENSEMBLE_INFERENCE_TYPE[name]
+    except KeyError:
+        raise ValueError('Ensemble name can only be {}'.format(ENSEMBLE_INFERENCE_TYPE.keys()))
+
+
+    return result

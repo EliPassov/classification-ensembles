@@ -1,14 +1,9 @@
+import argparse
 import numpy as np
 import tqdm
 import os
 
-import torch
-from torch.utils.data import DataLoader
-from torch import nn
-import torch.nn.functional as F
-
-from pytorch_classifier.dataset import FolderDataset, FolderAugmentedDataset, FolderAugmentedTenCropDataset
-from pytorch_classifier.ensemble_net import majority_vote, MajorityEnsembleModule, AverageEnsembleModule
+from pytorch_classifier.ensemble_net import get_ensemble_class
 from pytorch_classifier.net_utils import NetWithResult, get_partial_classifier
 from pytorch_classifier.custom_dataloaders import *
 
@@ -42,38 +37,42 @@ def check_predictions_cats_and_dogs(predictions):
     return corrects/len(predictions)
 
 
+def setup():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--pretrained_net", action="store", default=None)
+    parser.add_argument("--trained_net_path", action="store", default=None)
+    parser.add_argument("--ensemble", action="store", default=None)
+    parser.add_argument("--eval_folder_path", action="store", default=None)
+    return parser.parse_args()
+
+
+def parse_args(args):
+    assert args.eval_folder_path is not None, '--eval_folder_path must be provided for evaluation run'
+
+    if args.pretrained_net is not None:
+        net = get_partial_classifier(args.pretrained_net)
+    elif args.trained_net_path is not None:
+        net=torch.load(args.trained_net_path)
+    else:
+        raise ValueError('Must either provide --pretrained_net name (e.g. squeezenet1_0) or '
+                         '--trained_net_path a transfer learning trained net file path')
+
+    if args.ensemble is not None:
+        if args.pretrained_net is not None:
+            assert args.ensemble == 'majority', 'Can only apply majority ensemble for pretrained net'
+        net = get_ensemble_class(args.ensemble)(net)
+        data_loader = get_ten_crop_dataloader(args.eval_folder_path)
+    else:
+        if args.trained_net_path is not None:
+            net = NetWithResult(net)
+        data_loader = get_simple_dataloader(args.eval_folder_path)
+
+
+    return net, data_loader
+
 if __name__=='__main__':
-    #TODO: Change this to args
-
-    #################################################
-    ### get pre-trained net with imagenet classes ###
-    #################################################
-    # net = get_partial_classifier('squeezenet1_0')
-    ### ensemble wrapper - optional
-    # net = MajorityEnsembleModule(net, True)
-
-    ##############################################
-    ### OR: load trained transfer learning net ###
-    ##############################################
-    ### simple trained net
-    # net = torch.load('/home/eli/test/cats_vs_dogs/squeezenet_super_mini_train_simple/net_e_199_score_0_9100.pt')
-    ### augmented trained net
-    net = torch.load('/home/eli/test/cats_vs_dogs/squeezenet_super_mini_train_from_scratch_with_auxilary2/net_e_171_score_0_9500.pt')
-    ### wrap net:
-    ### simple
-    net = NetWithResult(net)
-    ### or ensembles
-    # net = MajorityEnsembleModule(net)
-    # net = AverageEnsembleModule(net)
-
-    eval_path = '/home/eli/Data/cats_vs_dogs/sub_eval'
-
-    ############################################################
-    ### choose loader (simple or ensemble, depending on net) ###
-    ############################################################
-    data_loader = get_simple_dataloader(eval_path)
-    # data_loader = get_ensemble_of_augmentations_dataloader(eval_path)
-    # data_loader = get_ten_crop_dataloader(eval_path)
+    args = setup()
+    net, data_loader = parse_args(args)
 
     predictions = Evaluator(net, tqdm.tqdm(data_loader)).eval()
     print(check_predictions_cats_and_dogs(predictions))
